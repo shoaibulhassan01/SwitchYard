@@ -25,6 +25,12 @@ state: db 0,0,0,0                 ; State of every switch (0=straight, 1=diverte
 quit:  db 0                       ; Becomes 1 on pressing ESC
 old9:  dd 0                       ; old keyboard handler save here
 
+; har switch: (row,col) route0 ka pehla cell, (row,col) route1 ka pehla cell
+branch_tbl: db 3,15,  4,14      ; S1: east / south
+            db 19,15, 18,14     ; S2: east / north
+            db 9,30,  10,31     ; S3: north / east
+            db 10,47, 11,46     ; S4: east / south
+
 
 
 
@@ -193,6 +199,7 @@ start:
 main_loop:
 
     call move_train
+    call draw_switches       ; <-- naya: gate ke colors (green = open, red = closed)
     call delay
     cmp byte [quit], 0       ; ESC pressed?
     je main_loop
@@ -276,6 +283,47 @@ print_str:
 
 
 
+draw_switches:               ; open route green, closed route red
+    pusha
+    xor si, si
+sw_loop:
+    mov bp, si
+    shl bp, 2                ; har switch ki 4 bytes (si * 4)
+
+    ; route 0
+    mov cl, 0Ch              ; red (band)
+    cmp byte [state+si], 0
+    jne route0_done
+    mov cl, 0Ah              ; green (khula)
+route0_done:
+    xor ah, ah
+    mov al, [branch_tbl+bp]
+    xor bh, bh
+    mov bl, [branch_tbl+bp+1]
+    call calculate_di
+    mov [es:di+1], cl
+
+    ; route 1
+    mov cl, 0Ch              ; red (band)
+    cmp byte [state+si], 1
+    jne route1_done
+    mov cl, 0Ah              ; green (khula)
+route1_done:
+    xor ah, ah
+    mov al, [branch_tbl+bp+2]
+    xor bh, bh
+    mov bl, [branch_tbl+bp+3]
+    call calculate_di
+    mov [es:di+1], cl
+
+    inc si
+    cmp si, 4
+    jb sw_loop
+    popa
+    ret
+
+
+
 
 move_train:
     pusha
@@ -300,9 +348,46 @@ move_train:
     mov al, [train_dc]
     add [train_col], al
 
-    ; (yahan baad mein switch wale blocks aayenge)
 
+    ; 3) switch checks (train ne naya cell le liya, ab dekho switch par hai ya nahi)
 
+    ; --- Switch 1 (3,14): state 1 ho to south ---
+    cmp byte [train_row], 3
+    jne chk_plus
+    cmp byte [train_col], 14
+    jne chk_plus
+    cmp byte [state], 0
+    je chk_plus              ; state 0 = east, direction wahi rahe
+    mov byte [train_dr], 1   ; south
+    mov byte [train_dc], 0
+
+chk_plus:                    ; --- + (10,14): hamesha east ---
+    cmp byte [train_row], 10
+    jne chk_s3
+    cmp byte [train_col], 14
+    jne chk_s3
+    mov byte [train_dr], 0
+    mov byte [train_dc], 1   ; east
+
+chk_s3:                      ; --- Switch 3 (10,30): state 0 ho to north ---
+    cmp byte [train_row], 10
+    jne chk_s4
+    cmp byte [train_col], 30
+    jne chk_s4
+    cmp byte [state+2], 0
+    jne chk_s4               ; state 1 = east, direction wahi rahe
+    mov byte [train_dr], 0FFh   ; -1 = north
+    mov byte [train_dc], 0
+
+chk_s4:                      ; --- Switch 4 (10,46): state 1 ho to south ---
+    cmp byte [train_row], 10
+    jne chk_stop
+    cmp byte [train_col], 46
+    jne chk_stop
+    cmp byte [state+3], 1
+    jne chk_stop             ; state 0 = east, direction wahi rahe
+    mov byte [train_dr], 1   ; south
+    mov byte [train_dc], 0
 
 
 
