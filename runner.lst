@@ -1,0 +1,445 @@
+     1                                  org 0x100
+     2                                  
+     3 00000000 E98F00                      jmp start
+     4                                  
+     5 00000003 454E54525920313E        E1: db 'ENTRY 1>'
+     6 0000000B 454E54525920323E        E2: db 'ENTRY 2>'
+     7 00000013 0800                    E_Len: dw 8
+     8                                  
+     9 00000015 53544154494F4E2041      SA: db 'STATION A'
+    10 0000001E 53544154494F4E2042      SB: db 'STATION B'
+    11 00000027 53544154494F4E2043      SC: db 'STATION C'
+    12 00000030 53544154494F4E2044      SD: db 'STATION D'
+    13 00000039 0900                    S_Len: dw 9
+    14                                  
+    15 0000003B 03                      train_row: db 3       ; train start row & column
+    16 0000003C 08                      train_col: db 8
+    17 0000003D 00                      train_dr:  db 0                               ; train direction row
+    18 0000003E 01                      train_dc:  db 1                               ; train direction column
+    19 0000003F 2D                      under_ch:  db '-'                             ; under train character & attribute
+    20 00000040 07                      under_at:  db 07h                             
+    21 00000041 033A061E0A400E2E        stop_tbl:  db 3,58,  6,30,  10,64,  14,46     ; SA, SB, SC, SD stopping points
+    22 00000049 0F                      str_attr:  db 0Fh                             ; print_str ka color
+    23                                  
+    24 0000004A 00000000                state: db 0,0,0,0                 ; State of every switch (0=straight, 1=diverted)
+    25 0000004E 00                      quit:  db 0                       ; Becomes 1 on pressing ESC
+    26 0000004F 00000000                old9:  dd 0                       ; old keyboard handler save here
+    27                                  
+    28                                  ; har switch: (row,col) route0 ka pehla cell, (row,col) route1 ka pehla cell
+    29 00000053 030F040E                branch_tbl: db 3,15,  4,14      ; S1: east / south
+    30 00000057 130F120E                            db 19,15, 18,14     ; S2: east / north
+    31 0000005B 091E0A1F                            db 9,30,  10,31     ; S3: north / east
+    32 0000005F 0A2F0B2E                            db 10,47, 11,46     ; S4: east / south
+    33                                  
+    34                                  
+    35                                  
+    36                                  
+    37                                  kb_isr:
+    38                                  
+    39 00000063 50                          push ax
+    40 00000064 53                          push bx
+    41 00000065 E460                        in al, 60h               ; keyboard se scancode padho
+    42 00000067 A880                        test al, 80h             ; key chhodi gayi? to kuch mat karo
+    43 00000069 7520                        jnz kb_done
+    44 0000006B 3C01                        cmp al, 01h              ; ESC?
+    45 0000006D 7508                        jne kb_check
+    46 0000006F 2EC606[4E00]01              mov byte [cs:quit], 1
+    47 00000075 EB14                        jmp kb_done
+    48                                  
+    49                                   kb_check:
+    50 00000077 3C02                        cmp al, 02h              ; key < 1 ? ignore
+    51 00000079 7210                        jb kb_done
+    52 0000007B 3C05                        cmp al, 05h              ; key  > 4 ? ignore
+    53 0000007D 770C                        ja kb_done
+    54 0000007F 2C02                        sub al, 02h              ; 0 -> 3 
+    55 00000081 30E4                        xor ah, ah
+    56 00000083 89C3                        mov bx, ax
+    57 00000085 2E80B7[4A00]01              xor byte [cs:state+bx], 1   ; switch toggle (0 <-> 1)
+    58                                  
+    59                                   kb_done:
+    60 0000008B B020                        mov al, 20h
+    61 0000008D E620                        out 20h, al              ; EOI
+    62 0000008F 5B                          pop bx
+    63 00000090 58                          pop ax
+    64 00000091 CF                          iret
+    65                                  
+    66                                  
+    67                                  
+    68                                  
+    69                                  
+    70                                  start:
+    71                                  
+    72                                  
+    73 00000092 B80935                      mov ax, 3509h            ; remove old keyboard handler 
+    74 00000095 CD21                        int 21h
+    75 00000097 891E[4F00]                  mov [old9], bx
+    76 0000009B 8C06[5100]                  mov [old9+2], es
+    77 0000009F BA[6300]                    mov dx, kb_isr           ; our handler
+    78 000000A2 B80925                      mov ax, 2509h
+    79 000000A5 CD21                        int 21h
+    80                                  
+    81                                  
+    82                                  
+    83 000000A7 B80300                      mov ax, 0003h  ; clear screen
+    84 000000AA CD10                        int 10h
+    85                                  
+    86 000000AC B800B8                      mov ax, 0B800h
+    87 000000AF 8EC0                        mov es, ax
+    88                                  
+    89                                  
+    90 000000B1 B80300                      mov ax, 3     ; horizontal line printing
+    91 000000B4 BB0800                      mov bx, 8
+    92 000000B7 B93300                      mov cx, 51
+    93 000000BA E82801                      call hline
+    94                                  
+    95 000000BD B81300                      mov ax, 19
+    96 000000C0 BB0800                      mov bx, 8
+    97 000000C3 B93300                      mov cx, 51
+    98 000000C6 E81C01                      call hline
+    99                                  
+   100 000000C9 B80A00                      mov ax, 10
+   101 000000CC BB0E00                      mov bx, 14
+   102 000000CF B93300                      mov cx, 51
+   103 000000D2 E81001                      call hline
+   104                                  
+   105                                  
+   106 000000D5 B80300                      mov ax, 3     ; Vertical line printing
+   107 000000D8 BB0E00                      mov bx, 14
+   108 000000DB B91100                      mov cx, 17
+   109 000000DE E81601                      call vline
+   110                                  
+   111 000000E1 B80600                      mov ax, 6
+   112 000000E4 BB1E00                      mov bx, 30
+   113 000000E7 B90500                      mov cx, 5
+   114 000000EA E80A01                      call vline
+   115                                  
+   116 000000ED B80A00                      mov ax, 10
+   117 000000F0 BB2E00                      mov bx, 46
+   118 000000F3 B90500                      mov cx, 5
+   119 000000F6 E8FE00                      call vline
+   120                                  
+   121                                  
+   122 000000F9 B80A00                      mov ax, 10      ; prints intersection switches
+   123 000000FC BB0E00                      mov bx, 14
+   124 000000FF B12B                        mov cl, '+'
+   125 00000101 E80601                      call Print_Switch
+   126                                  
+   127 00000104 B80300                      mov ax, 3
+   128 00000107 BB0E00                      mov bx, 14
+   129 0000010A B131                        mov cl, '1'
+   130 0000010C E8FB00                      call Print_Switch
+   131                                  
+   132 0000010F B81300                      mov ax, 19
+   133 00000112 BB0E00                      mov bx, 14
+   134 00000115 B132                        mov cl, '2'
+   135 00000117 E8F000                      call Print_Switch
+   136                                  
+   137 0000011A B80A00                      mov ax, 10
+   138 0000011D BB1E00                      mov bx, 30
+   139 00000120 B133                        mov cl, '3'
+   140 00000122 E8E500                      call Print_Switch
+   141                                  
+   142 00000125 B80A00                      mov ax, 10
+   143 00000128 BB2E00                      mov bx, 46
+   144 0000012B B134                        mov cl, '4'
+   145 0000012D E8DA00                      call Print_Switch
+   146                                  
+   147                                  
+   148                                  
+   149 00000130 C606[4900]0F                mov byte [str_attr], 0Fh   ; entries white
+   150 00000135 B80300                      mov ax, 3                ; print Entry1
+   151 00000138 BB0000                      mov bx, 0
+   152 0000013B BE[0300]                    mov si, E1
+   153 0000013E 8B0E[1300]                  mov cx, [E_Len]
+   154 00000142 E8D100                      call print_str
+   155                                  
+   156 00000145 B81300                      mov ax, 19              ; print Entry2
+   157 00000148 BB0000                      mov bx, 0
+   158 0000014B BE[0B00]                    mov si, E2
+   159 0000014E 8B0E[1300]                  mov cx, [E_Len]
+   160 00000152 E8C100                      call print_str
+   161                                  
+   162                                  
+   163                                  
+   164 00000155 C606[4900]0C                mov byte [str_attr], 0Ch   ; red
+   165 0000015A B80300                      mov ax, 3                  ; print station A string
+   166 0000015D BB3B00                      mov bx, 59
+   167 00000160 BE[1500]                    mov si, SA
+   168 00000163 8B0E[3900]                  mov cx, [S_Len]
+   169 00000167 E8AC00                      call print_str
+   170                                  
+   171 0000016A C606[4900]0D                mov byte [str_attr], 0Dh   ; majenta
+   172 0000016F B80500                      mov ax, 5                  ; print station B
+   173 00000172 BB1E00                      mov bx, 30
+   174 00000175 BE[1E00]                    mov si, SB
+   175 00000178 8B0E[3900]                  mov cx, [S_Len]
+   176 0000017C E89700                      call print_str
+   177                                  
+   178 0000017F C606[4900]0A                mov byte [str_attr], 0Ah   ; green
+   179 00000184 B80A00                      mov ax, 10                 ; print station C
+   180 00000187 BB4100                      mov bx, 65
+   181 0000018A BE[2700]                    mov si, SC
+   182 0000018D 8B0E[3900]                  mov cx, [S_Len]
+   183 00000191 E88200                      call print_str
+   184                                  
+   185 00000194 C606[4900]09                mov byte [str_attr], 09h   ; blue
+   186 00000199 B80F00                      mov ax, 15                 ; print station D
+   187 0000019C BB2E00                      mov bx, 46
+   188 0000019F BE[3000]                    mov si, SD
+   189 000001A2 8B0E[3900]                  mov cx, [S_Len]
+   190 000001A6 E86D00                      call print_str
+   191                                  
+   192 000001A9 B81300                      mov ax, 19                 ; print station D
+   193 000001AC BB3B00                      mov bx, 59
+   194 000001AF BE[3000]                    mov si, SD
+   195 000001B2 8B0E[3900]                  mov cx, [S_Len]
+   196 000001B6 E85D00                      call print_str
+   197                                  
+   198                                  
+   199                                  main_loop:
+   200                                  
+   201 000001B9 E8BC00                      call move_train
+   202 000001BC E86D00                      call draw_switches       ; <-- naya: gate ke colors (green = open, red = closed)
+   203 000001BF E8A301                      call delay
+   204 000001C2 803E[4E00]00                cmp byte [quit], 0       ; ESC pressed?
+   205 000001C7 74F0                        je main_loop
+   206                                  
+   207 000001C9 1E                          push ds                  ; retreive old keyboard handler 
+   208 000001CA C516[4F00]                  lds dx, [old9]
+   209 000001CE B80925                      mov ax, 2509h
+   210 000001D1 CD21                        int 21h
+   211 000001D3 1F                          pop ds
+   212                                  
+   213                                  
+   214                                  
+   215 000001D4 B8004C                      mov ax, 4C00h            ; exit
+   216 000001D7 CD21                        int 21h
+   217                                  
+   218                                  
+   219                                  
+   220                                  
+   221                                  
+   222                                  
+   223                                  calculate_di:     ; calculates di offset
+   224                                  
+   225 000001D9 BA5000                      mov dx, 80
+   226 000001DC F7E2                        mul dx
+   227 000001DE 01D8                        add ax, bx
+   228 000001E0 01C0                        add ax, ax
+   229 000001E2 89C7                        mov di, ax
+   230 000001E4 C3                          ret
+   231                                  
+   232                                  
+   233                                  
+   234                                  hline:
+   235 000001E5 E8F1FF                      call calculate_di
+   236                                  
+   237                                    hloop:
+   238 000001E8 26C6052D                      mov byte [es:di], '-'
+   239 000001EC 26C6450107                    mov byte [es:di+1], 07h
+   240 000001F1 83C702                        add di, 2
+   241                                  
+   242 000001F4 E2F2                         loop hloop
+   243 000001F6 C3                           ret
+   244                                  
+   245                                  
+   246                                  vline:
+   247 000001F7 E8DFFF                      call calculate_di
+   248                                  
+   249                                    vloop:
+   250 000001FA 26C6057C                      mov byte [es:di], '|'
+   251 000001FE 26C6450107                    mov byte [es:di+1], 07h
+   252 00000203 81C7A000                      add di, 160
+   253                                  
+   254 00000207 E2F1                         loop vloop
+   255 00000209 C3                           ret
+   256                                  
+   257                                  
+   258                                  Print_Switch:
+   259                                  
+   260 0000020A E8CCFF                      call calculate_di
+   261                                  
+   262 0000020D 26880D                      mov [es:di], cl
+   263 00000210 26C645010E                  mov byte [es:di+1], 0x0E
+   264                                  
+   265 00000215 C3                          ret
+   266                                  
+   267                                  
+   268                                  print_str:
+   269                                  
+   270 00000216 E8C0FF                      call calculate_di
+   271                                  
+   272                                    strloop:
+   273                                  
+   274 00000219 8A04                         mov al, [si]
+   275 0000021B 268805                       mov [es:di], al
+   276 0000021E A0[4900]                     mov al, [str_attr]
+   277 00000221 26884501                     mov [es:di+1], al
+   278 00000225 46                           inc si
+   279 00000226 83C702                       add di, 2
+   280                                  
+   281 00000229 E2EE                        loop strloop
+   282 0000022B C3                          ret
+   283                                  
+   284                                  
+   285                                  
+   286                                  draw_switches:               ; open route green, closed route red
+   287 0000022C 60                          pusha
+   288 0000022D 31F6                        xor si, si
+   289                                  sw_loop:
+   290 0000022F 89F5                        mov bp, si
+   291 00000231 C1E502                      shl bp, 2                ; har switch ki 4 bytes (si * 4)
+   292                                  
+   293                                      ; route 0
+   294 00000234 B10C                        mov cl, 0Ch              ; red (band)
+   295 00000236 80BC[4A00]00                cmp byte [state+si], 0
+   296 0000023B 7502                        jne route0_done
+   297 0000023D B10A                        mov cl, 0Ah              ; green (khula)
+   298                                  route0_done:
+   299 0000023F 30E4                        xor ah, ah
+   300 00000241 8A86[5300]                  mov al, [branch_tbl+bp]
+   301 00000245 30FF                        xor bh, bh
+   302 00000247 8A9E[5400]                  mov bl, [branch_tbl+bp+1]
+   303 0000024B E88BFF                      call calculate_di
+   304 0000024E 26884D01                    mov [es:di+1], cl
+   305                                  
+   306                                      ; route 1
+   307 00000252 B10C                        mov cl, 0Ch              ; red (band)
+   308 00000254 80BC[4A00]01                cmp byte [state+si], 1
+   309 00000259 7502                        jne route1_done
+   310 0000025B B10A                        mov cl, 0Ah              ; green (khula)
+   311                                  route1_done:
+   312 0000025D 30E4                        xor ah, ah
+   313 0000025F 8A86[5500]                  mov al, [branch_tbl+bp+2]
+   314 00000263 30FF                        xor bh, bh
+   315 00000265 8A9E[5600]                  mov bl, [branch_tbl+bp+3]
+   316 00000269 E86DFF                      call calculate_di
+   317 0000026C 26884D01                    mov [es:di+1], cl
+   318                                  
+   319 00000270 46                          inc si
+   320 00000271 83FE04                      cmp si, 4
+   321 00000274 72B9                        jb sw_loop
+   322 00000276 61                          popa
+   323 00000277 C3                          ret
+   324                                  
+   325                                  
+   326                                  
+   327                                  
+   328                                  move_train:
+   329 00000278 60                          pusha
+   330                                  
+   331                                                                
+   332 00000279 30E4                        xor ah, ah               ; 1) Printing - at the previous train location
+   333 0000027B A0[3B00]                    mov al, [train_row]
+   334 0000027E 30FF                        xor bh, bh
+   335 00000280 8A1E[3C00]                  mov bl, [train_col]
+   336 00000284 E852FF                      call calculate_di
+   337                                  
+   338 00000287 A0[3F00]                    mov al, [under_ch]
+   339 0000028A 268805                      mov [es:di], al
+   340 0000028D A0[4000]                    mov al, [under_at]
+   341 00000290 26884501                    mov [es:di+1], al
+   342                                  
+   343                                  
+   344                                  
+   345                                                              
+   346 00000294 A0[3D00]                    mov al, [train_dr]         ; 2) one step increasing (row or column)
+   347 00000297 0006[3B00]                  add [train_row], al
+   348 0000029B A0[3E00]                    mov al, [train_dc]
+   349 0000029E 0006[3C00]                  add [train_col], al
+   350                                  
+   351                                  
+   352                                      ; 3) switch checks (train ne naya cell le liya, ab dekho switch par hai ya nahi)
+   353                                  
+   354                                      ; --- Switch 1 (3,14): state 1 ho to south ---
+   355 000002A2 803E[3B00]03                cmp byte [train_row], 3
+   356 000002A7 7518                        jne chk_plus
+   357 000002A9 803E[3C00]0E                cmp byte [train_col], 14
+   358 000002AE 7511                        jne chk_plus
+   359 000002B0 803E[4A00]00                cmp byte [state], 0
+   360 000002B5 740A                        je chk_plus              ; state 0 = east, direction wahi rahe
+   361 000002B7 C606[3D00]01                mov byte [train_dr], 1   ; south
+   362 000002BC C606[3E00]00                mov byte [train_dc], 0
+   363                                  
+   364                                  chk_plus:                    ; --- + (10,14): hamesha east ---
+   365 000002C1 803E[3B00]0A                cmp byte [train_row], 10
+   366 000002C6 7511                        jne chk_s3
+   367 000002C8 803E[3C00]0E                cmp byte [train_col], 14
+   368 000002CD 750A                        jne chk_s3
+   369 000002CF C606[3D00]00                mov byte [train_dr], 0
+   370 000002D4 C606[3E00]01                mov byte [train_dc], 1   ; east
+   371                                  
+   372                                  chk_s3:                      ; --- Switch 3 (10,30): state 0 ho to north ---
+   373 000002D9 803E[3B00]0A                cmp byte [train_row], 10
+   374 000002DE 7518                        jne chk_s4
+   375 000002E0 803E[3C00]1E                cmp byte [train_col], 30
+   376 000002E5 7511                        jne chk_s4
+   377 000002E7 803E[4C00]00                cmp byte [state+2], 0
+   378 000002EC 750A                        jne chk_s4               ; state 1 = east, direction wahi rahe
+   379 000002EE C606[3D00]FF                mov byte [train_dr], 0FFh   ; -1 = north
+   380 000002F3 C606[3E00]00                mov byte [train_dc], 0
+   381                                  
+   382                                  chk_s4:                      ; --- Switch 4 (10,46): state 1 ho to south ---
+   383 000002F8 803E[3B00]0A                cmp byte [train_row], 10
+   384 000002FD 7518                        jne chk_stop
+   385 000002FF 803E[3C00]2E                cmp byte [train_col], 46
+   386 00000304 7511                        jne chk_stop
+   387 00000306 803E[4D00]01                cmp byte [state+3], 1
+   388 0000030B 750A                        jne chk_stop             ; state 0 = east, direction wahi rahe
+   389 0000030D C606[3D00]01                mov byte [train_dr], 1   ; south
+   390 00000312 C606[3E00]00                mov byte [train_dc], 0
+   391                                  
+   392                                  
+   393                                  
+   394                                  chk_stop:                    ; checking that any station location arrives or not
+   395 00000317 31F6                        xor si, si
+   396                                  
+   397                                  stop_loop:
+   398 00000319 8A84[4100]                  mov al, [stop_tbl+si]
+   399 0000031D 3A06[3B00]                  cmp al, [train_row]
+   400 00000321 7514                        jne stop_next
+   401 00000323 8A84[4200]                  mov al, [stop_tbl+si+1]
+   402 00000327 3A06[3C00]                  cmp al, [train_col]
+   403 0000032B 750A                        jne stop_next
+   404 0000032D C606[3D00]00                mov byte [train_dr], 0
+   405 00000332 C606[3E00]00                mov byte [train_dc], 0
+   406                                  
+   407                                  stop_next:
+   408 00000337 83C602                      add si, 2
+   409 0000033A 83FE08                      cmp si, 8
+   410 0000033D 72DA                        jb stop_loop
+   411                                  
+   412                                                      
+   413 0000033F 30E4                        xor ah, ah        ; 4) calculating new train cell location then printing train on that
+   414 00000341 A0[3B00]                    mov al, [train_row]
+   415 00000344 30FF                        xor bh, bh
+   416 00000346 8A1E[3C00]                  mov bl, [train_col]
+   417 0000034A E88CFE                      call calculate_di
+   418                                  
+   419 0000034D 268A05                      mov al, [es:di]
+   420 00000350 A2[3F00]                    mov [under_ch], al
+   421 00000353 268A4501                    mov al, [es:di+1]
+   422 00000357 A2[4000]                    mov [under_at], al
+   423 0000035A 26C60541                    mov byte [es:di], 'A'
+   424 0000035E 26C645010C                  mov byte [es:di+1], 0Ch
+   425                                  
+   426 00000363 61                          popa
+   427 00000364 C3                          ret
+   428                                  
+   429                                  
+   430                                  
+   431                                  
+   432                                  
+   433                                  delay:
+   434 00000365 51                          push cx
+   435 00000366 52                          push dx
+   436 00000367 BA1400                      mov dx, 20               
+   437                                  d_outer:
+   438 0000036A B9FFFF                      mov cx, 0FFFFh
+   439                                  d_inner:
+   440 0000036D E2FE                        loop d_inner
+   441 0000036F 4A                          dec dx
+   442 00000370 75F8                        jnz d_outer
+   443 00000372 5A                          pop dx
+   444 00000373 59                          pop cx
+   445 00000374 C3                          ret
