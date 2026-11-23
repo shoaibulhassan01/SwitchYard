@@ -2,6 +2,8 @@ org 0x100
 
     jmp start
 
+
+
 E1: db 'ENTRY 1>'
 E2: db 'ENTRY 2>'
 E_Len: dw 8
@@ -12,24 +14,40 @@ SC: db 'STATION C'
 SD: db 'STATION D'
 S_Len: dw 9
 
+msg_ok:  db 'CORRECT: '      ; score labels (9 and 7 characters)
+msg_bad: db 'WRONG: '
+
+
 
 correct_cnt: db 0             ; trains that reached correct station
 wrong_cnt:   db 0             ; trains that reached a wrong station
+seed:        dw 0             ; seed for the random number generator
+next_entry:  db 0             ; which entry gets the next train (0 = Entry 1, 1 = Entry 2)
+spawn_cnt:   db 1             ; frames left before the next train comes
 
 
 
-train_row: db 3                               ; train start row & column
-train_col: db 8
-train_dr:  db 0                               ; train direction row
-train_dc:  db 1                               ; train direction column
-under_ch:  db '-'                             ; under train character & attribute
-under_at:  db 07h                             
-stop_tbl:  db 3,58,  6,30,  10,64,  14,46  ,19,58   ; SA, SB, SC, SD stations stopping points
-str_attr:  db 0Fh                                   ; print_str ka color
+; every stop is 3 bytes: row, col, station id (A=0, B=1, C=2, D=3)
+stops:     db 3,58,0,   6,30,1,   10,64,2,   14,46,3,   19,58,3
+st_col:    db 0Ch,0Dh,0Ah,09h   ; color of each station id (A red, B magenta, C green, D blue)
+
+; ----- data of every train (8 trains, one byte per train) -----
+t_on:   db 0,0,0,0,0,0,0,0    ; 1 = train is running, 0 = slot is free
+t_row:  db 0,0,0,0,0,0,0,0    ; train row
+t_col:  db 0,0,0,0,0,0,0,0    ; train column
+t_dr:   db 0,0,0,0,0,0,0,0    ; direction (row step)
+t_dc:   db 0,0,0,0,0,0,0,0    ; direction (column step)
+t_dest: db 0,0,0,0,0,0,0,0    ; destination station id (0-3)
+t_uch:  db 0,0,0,0,0,0,0,0    ; character under the train
+t_uat:  db 0,0,0,0,0,0,0,0    ; color under the train
+
+str_attr:  db 0Fh                             ; print_str ka color
 
 state: db 0,0,0,0                             ; State of every switch (0=straight, 1=diverted)
 quit:  db 0                                   ; Becomes 1 on pressing ESC
 old9:  dd 0                                   ; old keyboard handler save here
+
+
 
 ;store every switch's next path(row,col) ; for changing colors after the gates, ie (green = open , red = closed) 
 branch_tbl: db 3,15,  4,14      ; S1: east / south
@@ -204,11 +222,25 @@ start:
     call print_str
 
 
+
+
+
+    xor ah, ah               ; get BIOS timer ticks (comes in DX)
+    int 1Ah
+    mov [seed], dx           ; use it as random seed
+
+
+
+
 main_loop:
 
-    call move_train
-    call draw_switches       ; update gate colors (green = open, red = closed)
-    call delay
+    call erase_trains        ; 1) put track back under every train
+    call draw_switches       ; 2) update gate colors (green = open, red = closed)
+    call move_trains         ; 3) move every train one step
+    call spawn_train         ; 4) send a new train if it is time
+    call draw_trains         ; 5) draw every train
+    call draw_score          ; 6) show correct / wrong count
+    call delay               ; 7) wait for next frame
     cmp byte [quit], 0       ; ESC pressed?
     je main_loop
 
@@ -294,6 +326,87 @@ print_str:
 
 
 
+print_num:                   ; in: AX = row, BX = col, CL = number (0-255), prints 3 digits
+    call calculate_di        ; DI = screen position (CL is not changed)
+
+    mov al, cl
+    xor ah, ah
+    mov cl, 100
+    div cl                   ; AL = hundreds, AH = remaining
+    add al, '0'              ; digit -> character
+    mov [es:di], al
+    mov byte [es:di+1], 0Fh
+
+    mov al, ah
+    xor ah, ah
+    mov cl, 10
+    div cl                   ; AL = tens, AH = ones
+    add al, '0'
+    mov [es:di+2], al
+    mov byte [es:di+3], 0Fh
+
+    add ah, '0'
+    mov [es:di+4], ah
+    mov byte [es:di+5], 0Fh
+    ret
+
+
+
+
+draw_score:                  ; show "CORRECT: 000   WRONG: 000" on row 22
+    pusha
+
+    mov byte [str_attr], 0Ah ; green
+    mov ax, 22
+    mov bx, 0
+    mov si, msg_ok
+    mov cx, 9
+    call print_str
+
+    mov ax, 22
+    mov bx, 9
+    mov cl, [correct_cnt]
+    call print_num
+
+    mov byte [str_attr], 0Ch ; red
+    mov ax, 22
+    mov bx, 20
+    mov si, msg_bad
+    mov cx, 7
+    call print_str
+
+    mov ax, 22
+    mov bx, 27
+    mov cl, [wrong_cnt]
+    call print_num
+
+    popa
+    ret
+
+
+
+
+rand:                        ; in: CL = n    out: AL = random number from 0 to n-1
+    push bx
+    push dx
+    mov ax, [seed]
+    mov dx, 25173
+    mul dx                   ; seed = seed * 25173 + 13849
+    add ax, 13849
+    mov [seed], ax
+    mov al, ah               ; high byte is more random than low byte
+    xor ah, ah
+    div cl                   ; AH = remainder = number from 0 to n-1
+    mov al, ah
+    xor ah, ah
+    pop dx
+    pop bx
+    ret
+
+
+
+
+
 draw_switches:               ; open route green, closed route red
 
     pusha
@@ -339,142 +452,243 @@ draw_switches:               ; open route green, closed route red
 
 
 
-move_train:
-
+erase_trains:                ; put the old track back under every running train
     pusha
-                            
-    xor ah, ah               ; 1) Printing - at the previous train location
-    mov al, [train_row]
+    mov si, 7                ; go from the last train (7) to the first (0)
+er_loop:
+    cmp byte [t_on+si], 0
+    je er_next               ; slot is free, skip
+
+    xor ah, ah
+    mov al, [t_row+si]
     xor bh, bh
-    mov bl, [train_col]
+    mov bl, [t_col+si]
     call calculate_di
 
-    mov al, [under_ch]
+    mov al, [t_uch+si]       ; old character
     mov [es:di], al
-    mov al, [under_at]
+    mov al, [t_uat+si]       ; old color
     mov [es:di+1], al
-
-
-
-                            
-    mov al, [train_dr]         ; 2) one step increasing (row or column)
-    add [train_row], al
-    mov al, [train_dc]
-    add [train_col], al
-
-
-
-
-        ; 3) switch checks (train moved, new check if train is on switch or not)
-
-
-    ; --- Switch 1 (3,14): state 1 then south ---
-    cmp byte [train_row], 3
-    jne chk_plus
-    cmp byte [train_col], 14
-    jne chk_plus
-    cmp byte [state], 0
-    je chk_plus              ; state 0 = east, same direction
-    mov byte [train_dr], 1   ; else south
-    mov byte [train_dc], 0
-
-chk_plus:                    ; --- + (10,14): always east ---
-    cmp byte [train_row], 10
-    jne chk_s3
-    cmp byte [train_col], 14
-    jne chk_s3
-    mov byte [train_dr], 0
-    mov byte [train_dc], 1   ; east
-
-
-
-; --- Switch 2 (19,14): state 1 then north ---
-    cmp byte [train_row], 19
-    jne chk_s3
-    cmp byte [train_col], 14
-    jne chk_s3
-    cmp byte [state+1], 1
-    jne chk_s3               ; state 0 = east, direction same
-    mov byte [train_dr], 0FFh   ; north
-    mov byte [train_dc], 0
-
-
-
-
-
-chk_s3:                      ; --- Switch 3 (10,30): state 0 then north ---
-    cmp byte [train_row], 10
-    jne chk_s4
-    cmp byte [train_col], 30
-    jne chk_s4
-    cmp byte [state +2], 0
-    jne chk_s4               ; state 1 = east, same direction 
-    mov byte [train_dr], 0FFh   ; -1 = north
-    mov byte [train_dc], 0
-
-chk_s4:                      ; --- Switch 4 (10,46): state 1 then south ---
-    cmp byte [train_row], 10
-    jne chk_stop
-    cmp byte [train_col], 46
-    jne chk_stop
-    cmp byte [state + 3], 1
-    jne chk_stop             ; state 0 = east, same direction
-    mov byte [train_dr], 1   ; south
-    mov byte [train_dc], 0
-
-
-
-chk_stop:                    ; checking that any station location arrives or not
-    xor si, si
-
-stop_loop:
-
-    mov al, [stop_tbl + si]
-    cmp al, [train_row]
-    jne stop_next
-    mov al, [stop_tbl + si + 1]
-    cmp al, [train_col]
-    jne stop_next
-
-    mov byte [train_dr], 0
-    mov byte [train_dc], 0
-
-stop_next:
-    add si, 2
-    cmp si, 10
-    jb stop_loop
-
-                    
-    xor ah, ah        ; 4) calculating new train cell location then printing train on that
-    mov al, [train_row]
-    xor bh, bh
-    mov bl, [train_col]
-    call calculate_di
-
-    mov al, [es:di]
-    mov [under_ch], al
-    mov al, [es:di+1]
-    mov [under_at], al
-    mov byte [es:di], 'A'
-    mov byte [es:di+1], 0Ch
-
+er_next:
+    dec si
+    jns er_loop              ; stop after slot 0
     popa
     ret
 
 
 
 
+draw_trains:                 ; draw every running train
+    pusha
+    xor si, si               ; start from train 0
+dr_loop:
+    cmp byte [t_on+si], 0
+    je dr_next               ; slot is free, skip
 
-delay:
+    xor ah, ah
+    mov al, [t_row+si]
+    xor bh, bh
+    mov bl, [t_col+si]
+    call calculate_di
+
+    mov al, [es:di]          ; save what is under the train
+    mov [t_uch+si], al
+    mov al, [es:di+1]
+    mov [t_uat+si], al
+
+    mov bl, [t_dest+si]      ; BX = destination station id
+    mov al, 'A'
+    add al, bl               ; letter of the destination (A, B, C or D)
+    mov [es:di], al
+    mov al, [st_col+bx]      ; color of the destination station
+    mov [es:di+1], al
+dr_next:
+    inc si
+    cmp si, 8
+    jb dr_loop
+    popa
+    ret
+
+
+
+
+move_trains:                 ; move every running train one step
+    pusha
+    xor si, si               ; start from train 0
+mv_loop:
+    cmp byte [t_on + si], 0
+    je mv_next               ; slot is free, skip
+
+    mov al, [t_dr + si]      ; one step in current direction
+    add [t_row + si], al
+    mov al, [t_dc + si]
+    add [t_col + si], al
+
+    call check_switches      ; turn if train is on a switch
+    call check_station       ; remove train if it reached a station
+mv_next:
+    inc si
+    cmp si, 8
+    jb mv_loop
+    popa
+    ret
+
+
+
+
+check_switches:              ; in: SI = train number
+
+    ; --- Switch 1 (3,14): state 1 then south ---
+    cmp byte [t_row + si], 3
+    jne cw_s2
+    cmp byte [t_col + si], 14
+    jne cw_s2
+    cmp byte [state], 0
+    je cw_s2                 ; state 0 = east, same direction
+    mov byte [t_dr + si], 1  ; else south
+    mov byte [t_dc + si], 0
+
+cw_s2:                       ; --- Switch 2 (19,14): state 1 then north ---
+    cmp byte [t_row + si], 19
+    jne cw_plus
+    cmp byte [t_col + si], 14
+    jne cw_plus
+    cmp byte [state + 1], 1
+    jne cw_plus              ; state 0 = east, same direction
+    mov byte [t_dr + si], 0FFh   ; -1 = north
+    mov byte [t_dc + si], 0
+
+cw_plus:                     ; --- + (10,14): always east ---
+    cmp byte [t_row + si], 10
+    jne cw_s3
+    cmp byte [t_col + si], 14
+    jne cw_s3
+    mov byte [t_dr + si], 0
+    mov byte [t_dc + si], 1  ; east
+
+cw_s3:                       ; --- Switch 3 (10,30): state 0 then north ---
+    cmp byte [t_row + si], 10
+    jne cw_s4
+    cmp byte [t_col + si], 30
+    jne cw_s4
+    cmp byte [state + 2], 0
+    jne cw_s4                ; state 1 = east, same direction
+    mov byte [t_dr + si], 0FFh   ; -1 = north
+    mov byte [t_dc + si], 0
+
+cw_s4:                       ; --- Switch 4 (10,46): state 1 then south ---
+    cmp byte [t_row + si], 10
+    jne cw_end
+    cmp byte [t_col + si], 46
+    jne cw_end
+    cmp byte [state + 3], 1
+    jne cw_end               ; state 0 = east, same direction
+    mov byte [t_dr + si], 1  ; south
+    mov byte [t_dc + si], 0
+
+cw_end:
+    ret
+
+
+
+
+check_station:               ; in: SI = train number
+    xor bx, bx               ; BX = position in stops table
+cst_loop:
+    mov al, [stops + bx]     ; station row
+    cmp al, [t_row + si]
+    jne cst_next
+    mov al, [stops + bx + 1] ; station column
+    cmp al, [t_col + si]
+    jne cst_next
+
+    mov byte [t_on + si], 0  ; train reached a station, it disappears
+
+    mov al, [stops + bx + 2] ; id of this station
+    cmp al, [t_dest + si]    ; same as train's destination?
+    jne cst_wrong
+    inc byte [correct_cnt]   ; right station
+    ret
+cst_wrong:
+    inc byte [wrong_cnt]     ; wrong station
+    ret
+
+cst_next:
+    add bx, 3                ; next stop (3 bytes each)
+    cmp bx, 15               ; 5 stops x 3 bytes
+    jb cst_loop
+    ret
+
+
+
+
+spawn_train:                 ; send a new train when the countdown ends
+    pusha
+    dec byte [spawn_cnt]
+    jnz sp_done              ; not time yet
+
+    xor si, si               ; look for a free slot
+sp_find:
+    cmp byte [t_on + si], 0
+    je sp_found
+    inc si
+    cmp si, 8
+    jb sp_find
+    jmp sp_reset             ; no free slot, try again later
+
+sp_found:
+    mov byte [t_on + si], 1  ; train is running now
+    mov byte [t_col + si], 8 ; both entries start at column 8
+    mov byte [t_dr + si], 0
+    mov byte [t_dc + si], 1  ; going east
+
+    cmp byte [next_entry], 0
+    jne sp_entry2
+
+    mov byte [t_row + si], 3 ; Entry 1 (row 3)
+    mov cl, 4
+    call rand                ; random destination A, B, C or D (0-3)
+    mov [t_dest + si], al
+    mov byte [next_entry], 1 ; next train comes from Entry 2
+    jmp sp_reset
+
+sp_entry2:
+    mov byte [t_row + si], 19 ; Entry 2 (row 19)
+    mov cl, 3
+    call rand                ; random destination B, C or D (1-3), A is not reachable
+    inc al
+    mov [t_dest + si], al
+    mov byte [next_entry], 0 ; next train comes from Entry 1
+
+sp_reset:
+    mov cl, 10
+    call rand                ; random 0-9
+    add al, 18               ; 18-27 frames = about 2 to 3 seconds
+    mov [spawn_cnt], al
+sp_done:
+    popa
+    ret
+
+
+
+
+delay:                       ; wait until 2 timer ticks have passed
+
+    push ax
+    push bx
     push cx
     push dx
-    mov dx, 20               
-d_outer:
-    mov cx, 0FFFFh
-d_inner:
-    loop d_inner
-    dec dx
-    jnz d_outer
+    xor ah, ah
+    int 1Ah                  ; DX = current tick
+    mov bx, dx               ; remember the start tick
+d_wait:
+    xor ah, ah
+    int 1Ah
+    sub dx, bx               ; ticks passed so far
+    cmp dx, 2
+    jb d_wait                ; not 2 ticks yet, keep waiting
     pop dx
     pop cx
+    pop bx
+    pop ax
     ret
